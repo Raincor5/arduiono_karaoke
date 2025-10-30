@@ -1,0 +1,19 @@
+{
+  "name": "karaoke-bot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "firmata": "^2.3.0",
+    "johnny-five": "^2.1.0",
+    "oled-font-5x7": "^1.0.3",
+    "oled-js": "^5.1.2",
+    "serialport": "^13.0.0"
+  }
+}
