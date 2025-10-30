@@ -78,11 +78,11 @@ console.table(melody);
 
 new five.Board().on("ready", function () {
     const board = this;
-    const piezo  = new five.Piezo(3);
-    const button = new five.Button({ pin: 2, isPullup: true });
+    const piezo  = new five.Piezo(9);
+    const button = new five.Button({ pin: 8, isPullup: true });
 
     // LCD init (HD44780 compatible): [RS, EN, D4, D5, D6, D7]
-    const lcd    = new five.LCD({ pins: [7, 8, 9, 10, 11, 12], rows: 2, cols: 16 });
+    const lcd    = new five.LCD({ pins: [12, 11, 5, 4, 3, 2], rows: 2, cols: 16 });
     lcd.noAutoscroll().noCursor().noBlink();
 
     // Buffered LCD writes
@@ -115,15 +115,7 @@ new five.Board().on("ready", function () {
         writeRow(0, ascii.slice(0,16));
         writeRow(1, ascii.slice(16,32));
     }
-    function showPhraseProgress(text, ratio) {
-        const ascii = translitRu(text);
-        const totalLen = ascii.length;
-        const cut = Math.max(0, Math.min(totalLen, Math.round(totalLen * ratio)));
-        const visible = ascii.slice(0, cut);
-        const padded = visible.padEnd(32, " ");
-        writeRow(0, padded.slice(0,16));
-        writeRow(1, padded.slice(16,32));
-    }
+    // Karaoke updates happen only on slot change; no per-note LCD updates
 
     // Build melody and flatten mapping between chord slots and lyric phrases
     const melody = createMelody(chordsFull, BPM);
@@ -139,6 +131,7 @@ new five.Board().on("ready", function () {
     let isPlaying = false;
     let isPaused = false;
     let i = 0;
+    let lastSlotIndex = -1;
 
     function playNext() {
         if (!isPlaying || isPaused || i >= melody.length) {
@@ -146,6 +139,7 @@ new five.Board().on("ready", function () {
                 console.log("🎵 Melody finished");
                 isPlaying = false;
                 i = 0;
+                lastSlotIndex = -1;
                 writeBothRows("Karaoke: press btn");
             }
             return;
@@ -154,15 +148,16 @@ new five.Board().on("ready", function () {
         const [note, duration] = melody[i++];
         const curNoteIdx = i - 1;
         const slotIndex = Math.floor(curNoteIdx / NOTES_PER_SLOT);
-        const intraIdx   = curNoteIdx % NOTES_PER_SLOT;
 
-        const phrase = slotIndex < slots ? lyricsFlat[slotIndex] : "";
-        const progressRatio = (intraIdx + 1) / NOTES_PER_SLOT;
+        // Update karaoke display only when a new phrase (slot) starts
+        if (slotIndex !== lastSlotIndex) {
+            lastSlotIndex = slotIndex;
+            const phrase = slotIndex < slots ? lyricsFlat[slotIndex] : "";
+            // Schedule LCD write slightly after note start to reduce contention
+            board.wait(2, () => writeBothRows(phrase));
+        }
 
-        // Update karaoke display: progressively reveal the phrase
-        showPhraseProgress(phrase, progressRatio);
-
-        console.log(`Playing: ${note ?? "pause"} (${Math.round(duration)} ms) | slot ${slotIndex + 1}/${slots} progress ${(progressRatio*100).toFixed(0)}%`);
+        console.log(`Playing: ${note ?? "pause"} (${Math.round(duration)} ms) | slot ${Math.min(slotIndex + 1, slots)}/${slots}`);
 
         if (note) {
             const freq = five.Piezo.Notes[note.toLowerCase()];
@@ -181,8 +176,8 @@ new five.Board().on("ready", function () {
             isPlaying = true;
             isPaused = false;
             i = 0;
-            // Clear phrase before first note
-            showPhraseProgress("", 0);
+            // Reset phrase index; LCD updates on slot change only
+            lastSlotIndex = -1;
             playNext();
         } else if (isPaused) {
             console.log("▶️  Resuming...");
@@ -200,6 +195,7 @@ new five.Board().on("ready", function () {
         isPlaying = false;
         isPaused = false;
         i = 0;
+        lastSlotIndex = -1;
         piezo.noTone();
         writeBothRows("Karaoke: press btn");
     });
