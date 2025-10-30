@@ -27,34 +27,18 @@ function createMelody(chords, bpm = 120) {
     const beat = (60 / bpm) * 1000; // quarter note in ms
     const melody = [];
 
-    // fixed arpeggio pattern (ascending, descending)
-    const arpeggioPatterns = [
-        [0, 1, 2, 1, 0, 1, 2, 1],
-        [0, 1, 2, 2, 1, 1, 0, 0],
-        [0, 1, 2, 2, 1, 0, 1, 1]
-    ];
+    // Arpeggio pattern — classic 8-note bar
+    const ARP_IDX = [0, 1, 2, 1, 0, 1, 2, 1];
 
-    // subtle rhythm variations (mostly eighths, some syncopation)
-    const rhythmPatterns = [
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 0.75, 1.25, 1, 1, 1, 0.75, 1.25],
-    ];
-
-    // mild dynamics — slight swells, not huge
-    const dynamicPatterns = [
-        [0.7, 0.75, 0.8, 0.85, 0.9, 0.85, 0.8, 0.75],
-        [0.8, 0.8, 0.85, 0.9, 0.9, 0.85, 0.8, 0.8],
-        [0.75, 0.8, 0.85, 0.9, 0.85, 0.8, 0.75, 0.7]
-    ];
+    // Very small rhythmic & dynamic deviation
+    const BASE_RHYTHM = 1;   // eighth notes
+    const BASE_DYNAMIC = 0.8;
+    const VARIATION = 0.08;  // ±8% variation
 
     for (const bar of chords) {
-        const arpeggio = arpeggioPatterns[Math.floor(Math.random() * arpeggioPatterns.length)];
-        const rhythm = rhythmPatterns[Math.floor(Math.random() * rhythmPatterns.length)];
-        const dynamics = dynamicPatterns[Math.floor(Math.random() * dynamicPatterns.length)];
-
         for (const ch of bar) {
             if (!ch) {
-                // rest for one bar (8 eighths)
+                // Pause (rest) one bar of eighths
                 for (let i = 0; i < 8; i++) {
                     melody.push([null, beat / 2, 0]);
                 }
@@ -63,21 +47,16 @@ function createMelody(chords, bpm = 120) {
 
             const notes = chordMap[ch];
 
-            // keep melody within same octave (avoid big jumps)
-            let lastNote = null;
-            for (let i = 0; i < arpeggio.length; i++) {
-                const idx = arpeggio[i];
-                const baseNote = notes[idx];
-                const duration = (beat / 2) * rhythm[i]; // 8th-note base
-                const dynamic = dynamics[i];
+            // Small chance to invert (play descending instead of ascending)
+            const isDescending = Math.random() < 0.25;
+            const pattern = isDescending ? [...ARP_IDX].reverse() : ARP_IDX;
 
-                // avoid repeating same note too much
-                let note = baseNote;
-                if (lastNote === baseNote && Math.random() < 0.4) {
-                    const alt = notes[(idx + 1) % notes.length];
-                    note = alt;
-                }
-                lastNote = note;
+            for (let i = 0; i < pattern.length; i++) {
+                const idx = pattern[i];
+                const note = notes[idx];
+                const rhythmFactor = BASE_RHYTHM + (Math.random() - 0.5) * VARIATION;
+                const dynamic = BASE_DYNAMIC + (Math.random() - 0.5) * VARIATION;
+                const duration = (beat / 2) * rhythmFactor;
 
                 melody.push([note, duration, dynamic]);
             }
@@ -86,6 +65,7 @@ function createMelody(chords, bpm = 120) {
 
     return melody;
 }
+
 
 // --- Генерация ---
 const melody = createMelody(chordsFull, BPM);
