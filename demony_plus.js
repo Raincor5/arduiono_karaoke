@@ -25,7 +25,6 @@ const chordMap = {
 // --- Функция генерации ---
 function createMelody(chords, bpm = 120) {
     const beat = (60 / bpm) * 1000; // четвертная нота (мс)
-    const durationRatios = [1, 0.5, 0.25, 2]; // четвертная, восьмая, шестнадцатая, половинная
     const melody = [];
 
     for (const bar of chords) {
@@ -38,9 +37,8 @@ function createMelody(chords, bpm = 120) {
             const notes = chordMap[ch];
             const note = notes[Math.floor(Math.random() * notes.length)];
 
-            // случайная длительность, но реальная, от bpm
-            const ratio = durationRatios[Math.floor(Math.random() * durationRatios.length)];
-            const duration = beat * ratio;
+            // фиксированная длительность: все ноты одной длины (четвертная)
+            const duration = beat;
 
             melody.push([note, duration]);
         }
