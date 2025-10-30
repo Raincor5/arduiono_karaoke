@@ -4,7 +4,6 @@ const BPM = 148;
 const BEAT = (60 / BPM) * 1000;
 const EIGHTH = BEAT / 2;
 
-// --- SONG DATA ---
 const chordsFull = [
     ["C", "Am", "Em", "G"],
     ["C", "Am", "Em", "G", null],
@@ -36,7 +35,6 @@ const chordMap = {
     G: ["G4", "B4", "D5"],
 };
 
-// --- MELODY ---
 function createMelody(chords) {
     const ARP = [0, 1, 2, 1, 0, 1, 2, 1];
     const melody = [];
@@ -53,7 +51,6 @@ function createMelody(chords) {
     return melody;
 }
 
-// --- BOARD SETUP ---
 new five.Board().on("ready", function () {
     const board = this;
     const piezo = new five.Piezo(9);
@@ -61,11 +58,7 @@ new five.Board().on("ready", function () {
     const lcd = new five.LCD({ pins: [11, 12, 5, 4, 3, 2], rows: 2, cols: 16 });
     lcd.noAutoscroll().noCursor().noBlink();
 
-    // Deterministic state
-    let playing = false;
-    let index = 0;
-    let timer = null;
-
+    // --- helper functions ---
     function lcdWrite(text) {
         const t = String(text).padEnd(32, " ").slice(0, 32);
         lcd.cursor(0, 0).print(t.slice(0, 16));
@@ -80,78 +73,86 @@ new five.Board().on("ready", function () {
         lcdWrite(rand());
     }
 
-    function stopPlayback(resetText = true) {
-        if (timer) clearInterval(timer);
-        piezo.noTone();
-        playing = false;
-        if (resetText) lcdWrite("Karaoke: press btn");
-    }
-
-    // --- MAIN PLAYER LOOP ---
-    function startSong() {
+    // --- main ---
+    function runSong() {
         const melody = createMelody(chordsFull);
         const lyrics = lyricsSplit.flat();
         const NOTES_PER_SLOT = 8;
 
-        index = 0;
-        playing = true;
-        lcdWrite("Starting...");
-        piezo.noTone();
+        // build timeline
+        const timeline = [];
+        let t = 0;
 
-        timer = setInterval(() => {
-            if (!playing) return;
-
-            // song end
-            if (index >= melody.length) {
-                stopPlayback();
-                console.log("🎵 Done");
-                return;
-            }
-
-            const slot = Math.floor(index / NOTES_PER_SLOT);
-            const [note, dur] = melody[index];
+        for (let i = 0; i < melody.length; i++) {
+            const [note, dur] = melody[i];
+            const slot = Math.floor(i / NOTES_PER_SLOT);
             const phrase = lyrics[slot] ?? "";
             const isDemon = /demony/i.test(phrase);
 
-            // lyric at start of bar
-            if (index % NOTES_PER_SLOT === 0) {
+            // lyric start
+            if (i % NOTES_PER_SLOT === 0) {
                 if (isDemon) {
-                    lcdGlitch();
-                    setTimeout(() => lcdWrite(phrase), 300);
+                    timeline.push({ time: t, type: "glitch" });
+                    timeline.push({ time: t + 250, type: "lyric", data: phrase });
                 } else {
-                    lcdWrite(phrase);
+                    timeline.push({ time: t, type: "lyric", data: phrase });
                 }
             }
 
             // tone
-            if (note) {
-                const freq = five.Piezo.Notes[note.toLowerCase()];
-                piezo.frequency(freq, dur * 0.9);
-            } else {
-                piezo.noTone();
-            }
+            timeline.push({ time: t, type: "tone", data: note, dur });
+            t += dur;
+        }
 
-            index++;
-        }, EIGHTH + 30); // 30ms buffer between notes
+        // end
+        timeline.push({ time: t + 500, type: "end" });
+
+        // play deterministically
+        let start = Date.now();
+        let idx = 0;
+
+        function scheduler() {
+            const now = Date.now() - start;
+            while (idx < timeline.length && timeline[idx].time <= now) {
+                const ev = timeline[idx++];
+                switch (ev.type) {
+                    case "lyric": lcdWrite(ev.data); break;
+                    case "glitch": lcdGlitch(); break;
+                    case "tone":
+                        if (ev.data) {
+                            const f = five.Piezo.Notes[ev.data.toLowerCase()];
+                            piezo.frequency(f, ev.dur * 0.9);
+                        } else piezo.noTone();
+                        break;
+                    case "end":
+                        piezo.noTone();
+                        lcdWrite("Karaoke: press btn");
+                        console.log("🎵 finished");
+                        return;
+                }
+            }
+            if (idx < timeline.length) setTimeout(scheduler, 5);
+        }
+
+        lcdWrite("Starting...");
+        scheduler();
     }
 
-    // --- BUTTONS ---
+    let playing = false;
     lcdWrite("Karaoke: press btn");
 
     button.on("press", () => {
         if (!playing) {
-            console.log("▶️ Start");
-            startSong();
-        } else {
-            console.log("⏸ Pause");
-            stopPlayback(false);
+            playing = true;
+            runSong();
         }
     });
 
     button.on("hold", () => {
-        console.log("⏹ Stop");
-        stopPlayback();
+        piezo.noTone();
+        lcdWrite("Karaoke: press btn");
+        playing = false;
     });
 
-    console.log("Ready! Press button to play, hold to stop.");
+    console.log("Ready!");
 });
