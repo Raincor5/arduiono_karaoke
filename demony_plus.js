@@ -24,46 +24,62 @@ const chordMap = {
 
 // --- Функция генерации ---
 function createMelody(chords, bpm = 120) {
-    const beat = (60 / bpm) * 1000; // четвертная нота (мс)
+    const beat = (60 / bpm) * 1000; // quarter note in ms
     const melody = [];
-    const arpeggioPattern = [0, 1, 2, 1, 0, 1, 2, 1]; // 8 notes per bar
 
-    // Rhythm variations: mix of eighth notes, dotted eighths, and sixteenths
-    const rhythmPatterns = [
-        [1, 1, 1, 1, 1, 1, 1, 1],           // straight eighths
-        [1.5, 0.5, 1, 1, 1.5, 0.5, 1, 1],   // dotted rhythm
-        [1, 1, 0.5, 0.5, 1, 1, 1, 1],       // syncopation
-        [0.75, 0.75, 0.5, 1, 1, 1, 1, 1]    // mixed
+    // fixed arpeggio pattern (ascending, descending)
+    const arpeggioPatterns = [
+        [0, 1, 2, 1, 0, 1, 2, 1],
+        [0, 1, 2, 2, 1, 1, 0, 0],
+        [0, 1, 2, 2, 1, 0, 1, 1]
     ];
 
-    // Dynamic levels (0-1)
+    // subtle rhythm variations (mostly eighths, some syncopation)
+    const rhythmPatterns = [
+        [1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 0.75, 1.25, 1, 1, 1, 0.75, 1.25],
+    ];
+
+    // mild dynamics — slight swells, not huge
     const dynamicPatterns = [
-        [0.5, 0.6, 0.7, 0.8, 0.9, 0.8, 0.7, 0.6],  // crescendo-decrescendo
-        [0.8, 0.5, 0.8, 0.5, 0.8, 0.5, 0.8, 0.5],  // accents on odd beats
-        [0.6, 0.6, 0.6, 0.6, 0.9, 0.7, 0.6, 0.5],  // emphasis on 5th
-        [0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7]   // steady
+        [0.7, 0.75, 0.8, 0.85, 0.9, 0.85, 0.8, 0.75],
+        [0.8, 0.8, 0.85, 0.9, 0.9, 0.85, 0.8, 0.8],
+        [0.75, 0.8, 0.85, 0.9, 0.85, 0.8, 0.75, 0.7]
     ];
 
     for (const bar of chords) {
+        const arpeggio = arpeggioPatterns[Math.floor(Math.random() * arpeggioPatterns.length)];
+        const rhythm = rhythmPatterns[Math.floor(Math.random() * rhythmPatterns.length)];
+        const dynamics = dynamicPatterns[Math.floor(Math.random() * dynamicPatterns.length)];
+
         for (const ch of bar) {
             if (!ch) {
-                // пауза 8 нот
+                // rest for one bar (8 eighths)
                 for (let i = 0; i < 8; i++) {
-                    melody.push([null, beat / 8, 0]);
+                    melody.push([null, beat / 2, 0]);
                 }
                 continue;
             }
 
             const notes = chordMap[ch];
-            const rhythm = rhythmPatterns[Math.floor(Math.random() * rhythmPatterns.length)];
-            const dynamics = dynamicPatterns[Math.floor(Math.random() * dynamicPatterns.length)];
 
-            // играем арпеджио по паттерну
-            for (let i = 0; i < arpeggioPattern.length; i++) {
-                const idx = arpeggioPattern[i];
-                const duration = (beat / 8) * rhythm[i];
+            // keep melody within same octave (avoid big jumps)
+            let lastNote = null;
+            for (let i = 0; i < arpeggio.length; i++) {
+                const idx = arpeggio[i];
+                const baseNote = notes[idx];
+                const duration = (beat / 2) * rhythm[i]; // 8th-note base
                 const dynamic = dynamics[i];
-                melody.push([notes[idx], duration, dynamic]);
+
+                // avoid repeating same note too much
+                let note = baseNote;
+                if (lastNote === baseNote && Math.random() < 0.4) {
+                    const alt = notes[(idx + 1) % notes.length];
+                    note = alt;
+                }
+                lastNote = note;
+
+                melody.push([note, duration, dynamic]);
             }
         }
     }
