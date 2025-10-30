@@ -1,7 +1,7 @@
 const five = require("johnny-five");
 
 // --- Конфигурация ---
-const BPM = 60; // ты можешь менять это значение
+const BPM = 148; // ты можешь менять это значение
 const BEAT_MS = (60 / BPM) * 1000; // длительность четверти в миллисекундах
 
 // --- Прогрессия ---
@@ -14,6 +14,22 @@ const chordsFull = [
     ["C", "Am", "Em", "G"],
 ];
 
+const lyricsSplit = [
+    ['Ya otpravlyus v dalniy put', 'i zabudu sigarety na balkone',
+    'Ya vernus i posmotryu', 'v zerkalo na poroge'],
+    ['Chtoby demony, demony, demony', 'menya ne odoleli',
+    'Demony, demony, demony', 'menya ne odoleli', 'Tvoj drug'],
+    ['Ya otpravlyus v dalniy put', 'i zabudu sigarety na balkone',
+    'Ya vernus i posmotryu', 'v zerkalo na poroge'],
+    ['Chtoby demony, demony, demony', 'menya ne odoleli',
+    'Demony, demony, demony', 'menya ne odoleli'],
+    ['Ya otpravlyus v dalniy put', 'i zabudu sigarety na balkone',
+    'Ya vernus i posmotryu', 'v zerkalo na poroge'],
+    ['Chtoby demony, demony, demony', 'menya ne odoleli',
+    'Demony, demony, demony', 'menya ne odoleli'],
+]
+
+
 // --- Маппинг аккордов на ноты ---
 const chordMap = {
     C:  ["C5", "E5", "G5"],
@@ -25,40 +41,28 @@ const chordMap = {
 // --- Функция генерации ---
 function createMelody(chords, bpm = 120) {
     const beat = (60 / bpm) * 1000; // quarter note in ms
+    const eighth = beat / 2;        // eighth note in ms
     const melody = [];
 
-    // Arpeggio pattern — classic 8-note bar
+    // Arpeggio pattern — classic 8-note bar, fixed order
     const ARP_IDX = [0, 1, 2, 1, 0, 1, 2, 1];
-
-    // Very small rhythmic & dynamic deviation
-    const BASE_RHYTHM = 1;   // eighth notes
-    const BASE_DYNAMIC = 0.8;
-    const VARIATION = 0.08;  // ±8% variation
 
     for (const bar of chords) {
         for (const ch of bar) {
             if (!ch) {
                 // Pause (rest) one bar of eighths
                 for (let i = 0; i < 8; i++) {
-                    melody.push([null, beat / 2, 0]);
+                    melody.push([null, eighth]);
                 }
                 continue;
             }
 
             const notes = chordMap[ch];
 
-            // Small chance to invert (play descending instead of ascending)
-            const isDescending = Math.random() < 0.25;
-            const pattern = isDescending ? [...ARP_IDX].reverse() : ARP_IDX;
-
-            for (let i = 0; i < pattern.length; i++) {
-                const idx = pattern[i];
+            // Fixed ascending/returning arpeggio, equal durations
+            for (const idx of ARP_IDX) {
                 const note = notes[idx];
-                const rhythmFactor = BASE_RHYTHM + (Math.random() - 0.5) * VARIATION;
-                const dynamic = BASE_DYNAMIC + (Math.random() - 0.5) * VARIATION;
-                const duration = (beat / 2) * rhythmFactor;
-
-                melody.push([note, duration, dynamic]);
+                melody.push([note, eighth]);
             }
         }
     }
@@ -77,69 +81,97 @@ new five.Board().on("ready", function () {
     const piezo  = new five.Piezo(3);
     const button = new five.Button({ pin: 2, isPullup: true });
 
+    // LCD init (HD44780 compatible): [RS, EN, D4, D5, D6, D7]
+    const lcd    = new five.LCD({ pins: [7, 8, 9, 10, 11, 12], rows: 2, cols: 16 });
+    lcd.noAutoscroll().noCursor().noBlink();
+
+    // Buffered LCD writes
+    const L = [" ".repeat(16), " ".repeat(16)];
+    const dirty = new Set();
+    let flushTimer = null;
+    function flushSoon(delay = 8) {
+        if (flushTimer) return;
+        flushTimer = setTimeout(() => {
+            dirty.forEach(r => { lcd.cursor(r, 0).print(L[r]); });
+            dirty.clear();
+            flushTimer = null;
+        }, delay);
+    }
+    function writeRow(row, text) {
+        const s = String(text ?? "").padEnd(16, " ").slice(0, 16);
+        if (L[row] !== s) {
+            L[row] = s;
+            dirty.add(row);
+            flushSoon(8);
+        }
+    }
+    function translitRu(s) {
+        if (!s) return "";
+        const map = {'А':'A','Б':'B','В':'V','Г':'G','Д':'D','Е':'E','Ё':'Yo','Ж':'Zh','З':'Z','И':'I','Й':'Y','К':'K','Л':'L','М':'M','Н':'N','О':'O','П':'P','Р':'R','С':'S','Т':'T','У':'U','Ф':'F','Х':'Kh','Ц':'Ts','Ч':'Ch','Ш':'Sh','Щ':'Sch','Ъ':'','Ы':'Y','Ь':'','Э':'E','Ю':'Yu','Я':'Ya','а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'};
+        return String(s).replace(/[\u0400-\u04FF]/g, ch => map[ch] ?? '?');
+    }
+    function writeBothRows(fullText) {
+        const ascii = translitRu(fullText).padEnd(32, " ").slice(0, 32);
+        writeRow(0, ascii.slice(0,16));
+        writeRow(1, ascii.slice(16,32));
+    }
+    function showPhraseProgress(text, ratio) {
+        const ascii = translitRu(text);
+        const totalLen = ascii.length;
+        const cut = Math.max(0, Math.min(totalLen, Math.round(totalLen * ratio)));
+        const visible = ascii.slice(0, cut);
+        const padded = visible.padEnd(32, " ");
+        writeRow(0, padded.slice(0,16));
+        writeRow(1, padded.slice(16,32));
+    }
+
+    // Build melody and flatten mapping between chord slots and lyric phrases
     const melody = createMelody(chordsFull, BPM);
+    const chordsFlat = chordsFull.flat();
+    const lyricsFlat = lyricsSplit.flat();
+    const slots = Math.min(chordsFlat.length, lyricsFlat.length);
+    const NOTES_PER_SLOT = 8;
+
+    // Initial screen
+    lcd.clear();
+    writeBothRows("Karaoke: press btn");
 
     let isPlaying = false;
     let isPaused = false;
     let i = 0;
-    let playbackTimer = null;
 
-    // Non-blocking playback with fade and dynamics
     function playNext() {
         if (!isPlaying || isPaused || i >= melody.length) {
             if (i >= melody.length && isPlaying) {
                 console.log("🎵 Melody finished");
                 isPlaying = false;
-                i = 0; // reset for next play
+                i = 0;
+                writeBothRows("Karaoke: press btn");
             }
             return;
         }
 
-        const [note, duration, dynamic] = melody[i++];
-        console.log(`Playing: ${note ?? "pause"} (${duration.toFixed(0)} ms) [dynamic: ${(dynamic * 100).toFixed(0)}%]`);
+        const [note, duration] = melody[i++];
+        const curNoteIdx = i - 1;
+        const slotIndex = Math.floor(curNoteIdx / NOTES_PER_SLOT);
+        const intraIdx   = curNoteIdx % NOTES_PER_SLOT;
+
+        const phrase = slotIndex < slots ? lyricsFlat[slotIndex] : "";
+        const progressRatio = (intraIdx + 1) / NOTES_PER_SLOT;
+
+        // Update karaoke display: progressively reveal the phrase
+        showPhraseProgress(phrase, progressRatio);
+
+        console.log(`Playing: ${note ?? "pause"} (${Math.round(duration)} ms) | slot ${slotIndex + 1}/${slots} progress ${(progressRatio*100).toFixed(0)}%`);
 
         if (note) {
             const freq = five.Piezo.Notes[note.toLowerCase()];
-
-            // Apply dynamics via PWM and fade for long notes
-            if (duration > 400) {
-                // Fade in/out for long notes
-                const fadeSteps = 5;
-                const fadeTime = Math.min(50, duration / 10);
-                const sustainTime = duration - (fadeTime * 2);
-
-                // Fade in
-                for (let step = 0; step < fadeSteps; step++) {
-                    const vol = (step / fadeSteps) * dynamic;
-                    board.wait(step * (fadeTime / fadeSteps), () => {
-                        if (isPlaying && !isPaused) {
-                            piezo.frequency(freq, fadeTime / fadeSteps);
-                        }
-                    });
-                }
-
-                // Sustain
-                board.wait(fadeTime, () => {
-                    if (isPlaying && !isPaused) {
-                        piezo.frequency(freq, sustainTime);
-                    }
-                });
-
-                // Fade out
-                board.wait(fadeTime + sustainTime, () => {
-                    if (isPlaying && !isPaused) {
-                        piezo.noTone();
-                    }
-                });
-            } else {
-                // Short notes - simple dynamics
-                const adjustedDuration = duration * (0.7 + dynamic * 0.3);
-                piezo.frequency(freq, adjustedDuration);
-            }
+            piezo.frequency(freq, duration);
+        } else {
+            piezo.noTone();
         }
 
-        // Schedule next note
-        playbackTimer = board.wait(duration + 20, playNext);
+        board.wait(duration + 20, playNext);
     }
 
     // Button controls
@@ -149,6 +181,8 @@ new five.Board().on("ready", function () {
             isPlaying = true;
             isPaused = false;
             i = 0;
+            // Clear phrase before first note
+            showPhraseProgress("", 0);
             playNext();
         } else if (isPaused) {
             console.log("▶️  Resuming...");
@@ -167,8 +201,8 @@ new five.Board().on("ready", function () {
         isPaused = false;
         i = 0;
         piezo.noTone();
+        writeBothRows("Karaoke: press btn");
     });
 
     console.log("Ready! Press button to play/pause, hold to stop.");
-
 })
