@@ -66,43 +66,13 @@ new five.Board().on("ready", function () {
     const piezo  = new five.Piezo(9);
     const button = new five.Button({ pin: 8, isPullup: true });
 
-    // ✅ RS=11, E=12, D4–D7=5–2
+    // ✅ LCD wiring: RS=11, E=12, D4–D7=5–2
     const lcd = new five.LCD({ pins: [11, 12, 5, 4, 3, 2], rows: 2, cols: 16 });
     lcd.noAutoscroll().noCursor().noBlink();
 
-    // ✅ Замедленные команды — против глюков HD44780
     lcd.commandDelay = 12;
     lcd.clearDelay   = 8;
     lcd.printDelay   = 8;
-
-    // ✅ Буфер LCD
-    const L = [" ".repeat(16), " ".repeat(16)];
-    const dirty = new Set();
-    let flushTimer = null;
-
-    function flushSoon(delay = 25) {  // увеличено с 8 → 25 мс
-        if (flushTimer) return;
-        flushTimer = setTimeout(() => {
-            dirty.forEach(r => {
-                try { lcd.cursor(r, 0).print(L[r]); }
-                catch (err) {
-                    console.warn("LCD write err", err);
-                    lcd.clear(); // автоочистка при сбое
-                }
-            });
-            dirty.clear();
-            flushTimer = null;
-        }, delay);
-    }
-
-    function writeRow(row, text) {
-        const s = String(text ?? "").padEnd(16, " ").slice(0, 16);
-        if (L[row] !== s) {
-            L[row] = s;
-            dirty.add(row);
-            flushSoon();
-        }
-    }
 
     function translitRu(s) {
         if (!s) return "";
@@ -114,107 +84,107 @@ new five.Board().on("ready", function () {
         const ascii = translitRu(fullText).padEnd(32, " ").slice(0, 32);
         const line0 = ascii.slice(0, 16);
         const line1 = ascii.slice(16, 32);
-
-        // One write at a time
         lcd.cursor(0, 0).print(line0);
-        board.wait(20, () => lcd.cursor(1, 0).print(line1)); // wait > LCD busy time
+        board.wait(20, () => lcd.cursor(1, 0).print(line1));
     }
 
+    // --- Deterministic Queue Player ---
+    function runSequence() {
+        const melody = createMelody(chordsFull, BPM);
+        const chordsFlat = chordsFull.flat();
+        const lyricsFlat = lyricsSplit.flat();
+        const slots = Math.min(chordsFlat.length, lyricsFlat.length);
+        const NOTES_PER_SLOT = 8;
 
-    // --- Karaoke engine ---
-    const melody = createMelody(chordsFull, BPM);
-    const chordsFlat = chordsFull.flat();
-    const lyricsFlat = lyricsSplit.flat();
-    const slots = Math.min(chordsFlat.length, lyricsFlat.length);
-    const NOTES_PER_SLOT = 8;
+        const queue = [];
 
+        // Build event queue
+        for (let i = 0; i < melody.length; i++) {
+            const [note, duration] = melody[i];
+            const slotIndex = Math.floor(i / NOTES_PER_SLOT);
+            const phrase = lyricsFlat[slotIndex] ?? "";
+
+            if (i % NOTES_PER_SLOT === 0) {
+                queue.push({ type: "lyric", phrase });
+            }
+            queue.push({ type: "tone", note, duration });
+        }
+
+        let idx = 0;
+        function next() {
+            if (idx >= queue.length) {
+                writeBothRows("Karaoke: press btn");
+                isPlaying = false;
+                console.log("🎵 Sequence finished");
+                return;
+            }
+
+            const ev = queue[idx++];
+            switch (ev.type) {
+                case "lyric": {
+                    const phrase = ev.phrase;
+                    const isDemon = /demony/i.test(phrase);
+
+                    if (isDemon) {
+                        const glitch = () => writeBothRows(
+                            Array.from({ length: 32 },
+                                () => String.fromCharCode(Math.floor(Math.random() * 64) + 32)
+                            ).join("")
+                        );
+
+                        glitch();
+                        board.wait(150, glitch);
+                        board.wait(300, glitch);
+                        board.wait(450, () => writeBothRows(phrase));
+                        board.wait(600, next); // resume only after full recovery
+                        return;
+                    } else {
+                        writeBothRows(phrase);
+                        board.wait(40, next);
+                        return;
+                    }
+                }
+
+                case "tone": {
+                    const { note, duration } = ev;
+                    if (note) {
+                        const freq = five.Piezo.Notes[note.toLowerCase()];
+                        piezo.frequency(freq, duration);
+                    } else {
+                        piezo.noTone();
+                    }
+                    board.wait(duration, next);
+                    return;
+                }
+
+                default:
+                    board.wait(10, next);
+            }
+        }
+
+        next();
+    }
+
+    // --- UI control ---
     lcd.clear();
     writeBothRows("Karaoke: press btn");
 
     let isPlaying = false;
-    let isPaused = false;
-    let i = 0;
-    let lastSlotIndex = -1;
 
-    function playNext() {
-        if (!isPlaying || isPaused || i >= melody.length) {
-            if (i >= melody.length && isPlaying) {
-                console.log("🎵 Melody finished");
-                isPlaying = false;
-                i = 0;
-                lastSlotIndex = -1;
-                writeBothRows("Karaoke: press btn");
-            }
-            return;
-        }
-
-        const [note, duration] = melody[i++];
-        const slotIndex = Math.floor((i - 1) / NOTES_PER_SLOT);
-
-        // --- LCD update per slot ---
-        if (slotIndex !== lastSlotIndex) {
-            lastSlotIndex = slotIndex;
-            const phrase = slotIndex < slots ? lyricsFlat[slotIndex] : "";
-            const isDemonMoment = /demony/i.test(phrase);
-
-            if (isDemonMoment) {
-                const glitch = () =>
-                    writeBothRows(
-                        Array.from({ length: 32 },
-                            () => String.fromCharCode(Math.floor(Math.random() * 64) + 32)
-                        ).join("")
-                    );
-
-                for (let j = 0; j < 3; j++) board.wait(j * 150, glitch);
-
-                const randNote = ["C6", "D5", "F#4", "A5"][Math.floor(Math.random() * 4)];
-                piezo.frequency(five.Piezo.Notes[randNote.toLowerCase()], 100);
-
-                board.wait(500, () => writeBothRows(phrase));
-            } else {
-                board.wait(5, () => writeBothRows(phrase)); // ⚠️ задержка >2 мс
-            }
-        }
-
-        if (note) {
-            const freq = five.Piezo.Notes[note.toLowerCase()];
-            piezo.frequency(freq, duration);
-        } else {
-            piezo.noTone();
-        }
-
-        board.wait(duration + 25, playNext); // ⚠️ добавлено 25 мс запас
-    }
-
-    // --- Button controls ---
     button.on("press", () => {
         if (!isPlaying) {
-            console.log("▶️ Starting playback...");
+            console.log("▶️ Starting deterministic playback...");
             isPlaying = true;
-            isPaused = false;
-            i = 0;
-            lastSlotIndex = -1;
-            playNext();
-        } else if (isPaused) {
-            console.log("▶️ Resuming...");
-            isPaused = false;
-            playNext();
-        } else {
-            console.log("⏸️ Pausing...");
-            isPaused = true;
-            piezo.noTone();
+            runSequence();
         }
     });
 
     button.on("hold", () => {
         console.log("⏹️ Stopping...");
         isPlaying = false;
-        isPaused = false;
-        i = 0;
-        lastSlotIndex = -1;
         piezo.noTone();
         writeBothRows("Karaoke: press btn");
     });
 
-    console.log("Ready! Press button to play/pause, hold to stop.");
+    console.log("Ready! Press button to play, hold to stop.");
 });
