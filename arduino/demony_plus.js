@@ -112,9 +112,14 @@ new five.Board().on("ready", function () {
 
     function writeBothRows(fullText) {
         const ascii = translitRu(fullText).padEnd(32, " ").slice(0, 32);
-        writeRow(0, ascii.slice(0, 16));
-        writeRow(1, ascii.slice(16, 32));
+        const line0 = ascii.slice(0, 16);
+        const line1 = ascii.slice(16, 32);
+
+        // One write at a time
+        lcd.cursor(0, 0).print(line0);
+        board.wait(20, () => lcd.cursor(1, 0).print(line1)); // wait > LCD busy time
     }
+
 
     // --- Karaoke engine ---
     const melody = createMelody(chordsFull, BPM);
