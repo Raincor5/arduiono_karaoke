@@ -1,10 +1,10 @@
 const five = require("johnny-five");
 
-// --- CONFIG ---
 const BPM = 148;
-const BEAT_MS = (60 / BPM) * 1000;
+const BEAT = (60 / BPM) * 1000;
+const EIGHTH = BEAT / 2;
 
-// --- CHORDS ---
+// --- SONG DATA ---
 const chordsFull = [
     ["C", "Am", "Em", "G"],
     ["C", "Am", "Em", "G", null],
@@ -14,7 +14,6 @@ const chordsFull = [
     ["C", "Am", "Em", "G"],
 ];
 
-// --- LYRICS ---
 const lyricsSplit = [
     ["Ya otpravlyus v dalniy put", "i zabudu sigarety na balkone",
         "Ya vernus i posmotryu", "v zerkalo na poroge"],
@@ -30,7 +29,6 @@ const lyricsSplit = [
         "Demony, demony, demony", "menya ne odoleli"],
 ];
 
-// --- CHORD MAP ---
 const chordMap = {
     C: ["C5", "E5", "G5"],
     Am: ["A4", "C5", "E5"],
@@ -38,146 +36,121 @@ const chordMap = {
     G: ["G4", "B4", "D5"],
 };
 
-// --- MELODY GENERATOR ---
-function createMelody(chords, bpm = 120) {
-    const beat = (60 / bpm) * 1000;
-    const eighth = beat / 2;
+// --- MELODY ---
+function createMelody(chords) {
+    const ARP = [0, 1, 2, 1, 0, 1, 2, 1];
     const melody = [];
-    const ARP_IDX = [0, 1, 2, 1, 0, 1, 2, 1];
-
     for (const bar of chords) {
         for (const ch of bar) {
             if (!ch) {
-                for (let i = 0; i < 8; i++) melody.push([null, eighth]);
+                for (let i = 0; i < 8; i++) melody.push([null, EIGHTH]);
                 continue;
             }
             const notes = chordMap[ch];
-            for (const idx of ARP_IDX) melody.push([notes[idx], eighth]);
+            for (const idx of ARP) melody.push([notes[idx], EIGHTH]);
         }
     }
     return melody;
 }
 
-// --- BOARD ---
+// --- BOARD SETUP ---
 new five.Board().on("ready", function () {
     const board = this;
     const piezo = new five.Piezo(9);
     const button = new five.Button({ pin: 8, isPullup: true });
     const lcd = new five.LCD({ pins: [11, 12, 5, 4, 3, 2], rows: 2, cols: 16 });
-
     lcd.noAutoscroll().noCursor().noBlink();
 
-    // --- SEQUENTIAL EVENT QUEUE ---
-    const queue = [];
-    let isRunning = false;
+    // Deterministic state
+    let playing = false;
+    let index = 0;
+    let timer = null;
 
-    function enqueue(fn, delay = 0) {
-        queue.push({ fn, delay });
-    }
-
-    function processQueue() {
-        if (queue.length === 0) {
-            isRunning = false;
-            return;
-        }
-
-        isRunning = true;
-        const { fn, delay } = queue.shift();
-
-        try { fn(); }
-        catch (err) { console.warn("Queue step error:", err); }
-
-        board.wait(delay, processQueue);
-    }
-
-    function startQueue() {
-        if (!isRunning) processQueue();
-    }
-
-    // --- LCD WRITER ---
     function lcdWrite(text) {
-        const txt = String(text).padEnd(32, " ").slice(0, 32);
-        const line1 = txt.slice(0, 16);
-        const line2 = txt.slice(16, 32);
-
-        enqueue(() => lcd.cursor(0, 0).print(line1), 50);
-        enqueue(() => lcd.cursor(1, 0).print(line2), 50);
+        const t = String(text).padEnd(32, " ").slice(0, 32);
+        lcd.cursor(0, 0).print(t.slice(0, 16));
+        lcd.cursor(1, 0).print(t.slice(16, 32));
     }
 
-    // --- GLITCH EFFECT ---
-    function glitchEffect() {
-        const rand = () => Array.from({ length: 32 },
-            () => String.fromCharCode(Math.floor(Math.random() * 64) + 32)
-        ).join("");
-
-        enqueue(() => lcdWrite(rand()), 120);
-        enqueue(() => lcdWrite(rand()), 120);
-        enqueue(() => lcdWrite(rand()), 120);
+    function lcdGlitch() {
+        const rand = () =>
+            Array.from({ length: 32 },
+                () => String.fromCharCode(Math.floor(Math.random() * 64) + 32)
+            ).join("");
+        lcdWrite(rand());
     }
 
-    // --- SONG SEQUENCE ---
-    function runSequence() {
-        const melody = createMelody(chordsFull, BPM);
-        const lyricsFlat = lyricsSplit.flat();
+    function stopPlayback(resetText = true) {
+        if (timer) clearInterval(timer);
+        piezo.noTone();
+        playing = false;
+        if (resetText) lcdWrite("Karaoke: press btn");
+    }
+
+    // --- MAIN PLAYER LOOP ---
+    function startSong() {
+        const melody = createMelody(chordsFull);
+        const lyrics = lyricsSplit.flat();
         const NOTES_PER_SLOT = 8;
 
-        lcdWrite("Karaoke: playing...");
-        enqueue(() => piezo.noTone(), 100);
+        index = 0;
+        playing = true;
+        lcdWrite("Starting...");
+        piezo.noTone();
 
-        for (let i = 0; i < melody.length; i++) {
-            const [note, duration] = melody[i];
-            const slotIndex = Math.floor(i / NOTES_PER_SLOT);
-            const phrase = lyricsFlat[slotIndex] ?? "";
+        timer = setInterval(() => {
+            if (!playing) return;
+
+            // song end
+            if (index >= melody.length) {
+                stopPlayback();
+                console.log("🎵 Done");
+                return;
+            }
+
+            const slot = Math.floor(index / NOTES_PER_SLOT);
+            const [note, dur] = melody[index];
+            const phrase = lyrics[slot] ?? "";
             const isDemon = /demony/i.test(phrase);
 
-            // New lyric start
-            if (i % NOTES_PER_SLOT === 0) {
+            // lyric at start of bar
+            if (index % NOTES_PER_SLOT === 0) {
                 if (isDemon) {
-                    glitchEffect();
-                    enqueue(() => lcdWrite(phrase), 300);
+                    lcdGlitch();
+                    setTimeout(() => lcdWrite(phrase), 300);
                 } else {
-                    enqueue(() => lcdWrite(phrase), 80);
+                    lcdWrite(phrase);
                 }
             }
 
-            // Play tone
+            // tone
             if (note) {
-                enqueue(() => {
-                    const freq = five.Piezo.Notes[note.toLowerCase()];
-                    piezo.frequency(freq, duration);
-                }, duration);
+                const freq = five.Piezo.Notes[note.toLowerCase()];
+                piezo.frequency(freq, dur * 0.9);
             } else {
-                enqueue(() => piezo.noTone(), duration);
+                piezo.noTone();
             }
-        }
 
-        // END SEQUENCE
-        enqueue(() => piezo.noTone(), 200);
-        enqueue(() => lcdWrite("Karaoke: press btn"), 300);
-        enqueue(() => console.log("🎵 Finished cleanly"), 0);
-
-        startQueue();
+            index++;
+        }, EIGHTH + 30); // 30ms buffer between notes
     }
 
-    // --- BUTTON CONTROL ---
-    let isPlaying = false;
+    // --- BUTTONS ---
     lcdWrite("Karaoke: press btn");
 
     button.on("press", () => {
-        if (!isPlaying) {
-            console.log("▶️ Starting playback...");
-            isPlaying = true;
-            runSequence();
+        if (!playing) {
+            console.log("▶️ Start");
+            startSong();
+        } else {
+            console.log("⏸ Pause");
+            stopPlayback(false);
         }
     });
 
     button.on("hold", () => {
-        console.log("⏹️ Stopping...");
-        queue.length = 0; // clear queue
-        isRunning = false;
-        isPlaying = false;
-        piezo.noTone();
-        lcdWrite("Karaoke: press btn");
+        console.log("⏹ Stop");
+        stopPlayback();
     });
 
     console.log("Ready! Press button to play, hold to stop.");
