@@ -150,12 +150,37 @@ new five.Board().on("ready", function () {
         const slotIndex = Math.floor(curNoteIdx / NOTES_PER_SLOT);
 
         // Update karaoke display only when a new phrase (slot) starts
+        // ... внутри playNext(), перед board.wait(duration + 20, playNext);
         if (slotIndex !== lastSlotIndex) {
             lastSlotIndex = slotIndex;
             const phrase = slotIndex < slots ? lyricsFlat[slotIndex] : "";
-            // Schedule LCD write slightly after note start to reduce contention
-            board.wait(2, () => writeBothRows(phrase));
+
+            // DETECT "DEMONY" moment
+            const isDemonMoment = /demony/i.test(phrase);
+
+            if (isDemonMoment) {
+                // хаос на LCD
+                const glitch = () =>
+                    writeBothRows(
+                        Array.from({ length: 32 },
+                            () => String.fromCharCode(Math.floor(Math.random() * 64) + 32)
+                        ).join("")
+                    );
+
+                // “одержимость”: три вспышки глюков подряд
+                for (let j = 0; j < 3; j++) board.wait(j * 150, glitch);
+
+                // звук сбоит
+                const randNote = ["C6","D5","F#4","A5"][Math.floor(Math.random()*4)];
+                piezo.frequency(five.Piezo.Notes[randNote.toLowerCase()], 100);
+
+                // через 500 мс восстанавливаем текст
+                board.wait(500, () => writeBothRows(phrase));
+            } else {
+                board.wait(2, () => writeBothRows(phrase));
+            }
         }
+
 
         console.log(`Playing: ${note ?? "pause"} (${Math.round(duration)} ms) | slot ${Math.min(slotIndex + 1, slots)}/${slots}`);
 
