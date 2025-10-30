@@ -54,7 +54,7 @@ const melody = createMelody(chordsFull, BPM);
 console.table(melody);
 
 
-five.Board().on("ready", function () {
+new five.Board().on("ready", function () {
     const board = this;
     const piezo  = new five.Piezo(3);
     const button = new five.Button({ pin: 2, isPullup: true });
@@ -75,7 +75,8 @@ five.Board().on("ready", function () {
         console.log(`Playing: ${note ?? "pause"} (${duration} ms)`);
 
         if (note) {
-            piezo.frequency(five.Piezo.Notes[note], duration);
+            const freq = five.Piezo.Notes[note.toLowerCase()];
+            piezo.frequency(freq, duration);
         }
 
         board.wait(duration + 50, playNext); // +50 мс пауза между нотами
