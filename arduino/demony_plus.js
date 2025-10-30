@@ -113,11 +113,16 @@ new five.Board().on("ready", function () {
         let idx = 0;
         function next() {
             if (idx >= queue.length) {
-                writeBothRows("Karaoke: press btn");
-                isPlaying = false;
-                console.log("🎵 Sequence finished");
+                // Wait 700ms to ensure last glitch or tone fully finishes
+                board.wait(700, () => {
+                    piezo.noTone();
+                    writeBothRows("Karaoke: press btn");
+                    isPlaying = false;
+                    console.log("🎵 Sequence finished cleanly");
+                });
                 return;
             }
+
 
             const ev = queue[idx++];
             switch (ev.type) {
